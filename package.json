@@ -1,0 +1,14 @@
+{
+  "name": "server-sent-events-notification-example",
+  "version": "1.0.0",
+  "description": "server-sent events for notification of multiple-clients based on data from mysql retrieved using a global handler",
+  "main": "index.js",
+  "dependencies": {
+    "cookies": "0.5.x",
+    "express": "4.13.x",
+    "mysql": "2.9.x",
+    "sse-nodejs": "0.0.6"
+  },
+  "author": "Aleksander Chrabaszcz",
+  "license": "MIT"
+}
