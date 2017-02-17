@@ -1,9 +1,11 @@
-# node-sse-example
-Example of using node.js and server-sent events for browser notification.
-This example aims to deliver information about new events for characters in the game.
-It has a single global handler which can notify any of connected users using server-sent events.
+# node-socketio-example
+Example of using node.js and socketio for event notifications.
+It's an example of unidirectional communication, so it was tried to be done using server-sent events,
+but socket.io has proven to be a superior and better supported solution.
 
-SQL code of MySQL queries that authenticated connected users and get info who should be notified is left for implementation.
+This example aims to deliver the information about new events to the characters in the game.
+
+It has a single handler loop which can notify any of connected users when a new data is available.
 
 # how to run
-node server.js
+node server.js [PORT_TO_LISTEN]
