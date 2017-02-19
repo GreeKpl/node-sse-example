@@ -93,12 +93,12 @@ setInterval(function() {
   });
 }, HIGHLIGHTED_CHARACTERS_FREQUENCY_MSEC);
 
-var app = http.createServer(function(req, res) {
+var server = http.createServer(function(req, res) {
   res.writeHead(200, {'Content-Type': 'text/plain'});
   res.end('okay');
 });
 
-var io = socketIO(app, {
+var io = socketIO(server, {
   path: '/real-time/socket.io'
 });
 
@@ -184,4 +184,4 @@ process.on('exit', function() {
   dbConnection.disconnect();
 });
 
-app.listen(SERVER_PORT);
+server.listen(SERVER_PORT, "127.0.0.1");
