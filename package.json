@@ -1,16 +1,17 @@
 {
-  "name": "server-sent-events-notification-example",
+  "name": "node-socketio-example",
   "version": "1.0.0",
-  "description": "server-sent events for notification of multiple-clients based on data from mysql retrieved using a global handler",
-  "main": "index.js",
-  "repository": "example.com",
+  "description": "socketio to notify multiple clients based on data from mysql retrieved using a global handler",
+  "main": "server.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alchrabas/node-socketio-example"
+  },
   "dependencies": {
     "cookies": "0.5.x",
     "deep-equal": "^1.0.1",
-    "express": "4.13.x",
     "mysql": "2.9.x",
-    "socket.io": "1.7.2",
-    "socket.io-client": "1.7.2"
+    "socket.io": "1.7.2"
   },
   "author": "Aleksander Chrabaszcz",
   "license": "MIT"

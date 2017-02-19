@@ -109,7 +109,7 @@ function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listene
       'WHERE c.id = ? AND s.id = ?', [charId, sessionId], function(err, rows) {
       if (rows[0].count == 1) {
         console.log("Add user ", charId, " as an event observer");
-        var hostName = /(.*):\d+/.exec(socket.handshake.headers.host)[1];
+        var hostName = /(.*)(:\d+)?/.exec(socket.handshake.headers.host)[1];
         listenersForEventsList.push({
           charId: charId,
           socket: socket,
@@ -117,6 +117,8 @@ function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listene
           cookies: socket.handshake.headers.cookie,
           hostName: hostName
         });
+      } else {
+        socket.disconnect();
       }
     });
 
@@ -132,16 +134,21 @@ function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listene
 }
 
 function registerHighlightedCharacters(sessionId, socket, listenersForHighlighedCharacters, dbConnection) {
+
   dbConnection.query('SELECT player FROM sessions s ' +
     'WHERE s.id = ?', [sessionId], function(err, rows) {
-    var playerId = rows[0].player;
-    if (playerId) {
-      console.log("Add player ", playerId, " as active characters watcher");
-      listenersForHighlighedCharacters.push({
-        playerId: playerId,
-        socket: socket,
-        previousCharacterList: {},
-      });
+    if (rows.length > 0) {
+      var playerId = rows[0].player;
+      if (playerId) {
+        console.log("Add player ", playerId, " as active characters watcher");
+        listenersForHighlighedCharacters.push({
+          playerId: playerId,
+          socket: socket,
+          previousCharacterList: {},
+        });
+      }
+    } else {
+      socket.disconnect();
     }
   });
 
@@ -173,7 +180,7 @@ io.on('connection', function(socket) {
   }
 });
 
-process.on('exit', function(code) {
+process.on('exit', function() {
   dbConnection.disconnect();
 });
 
