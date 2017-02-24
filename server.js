@@ -7,7 +7,7 @@ var Cookies = require("cookies"),
   requestToApache = require("./requestToApache").default;
 
 
-var EVENT_REFRESH_FREQUENCY_MSEC = 100;
+var NEW_EVENTS_REFRESH_FREQUENCY_MSEC = 100;
 var HIGHLIGHTED_CHARACTERS_FREQUENCY_MSEC = 1000;
 var SESSION_COOKIE_NAME = "40d0228e409c8b711909680cba94881c";
 
@@ -22,32 +22,37 @@ var dbConnection = mysql.createConnection(dbCredentials);
 dbConnection.connect();
 
 
-function pushNewEventsToClient(clientData) {
+function pushNewEventsToClientAndUpdateLastEvent(clientData) {
   var requestUrl = '/liteindex.php?page=info.new_events&le='
     + clientData.lastEvent
     + "&character=" + clientData.charId;
-  var responseCallback = function(obj) {
-    clientData.socket.emit("new-events", obj);
-  };
+
   requestToApache(
     requestUrl,
     clientData,
-    responseCallback
+    function(apacheResponse) {
+      clientData.socket.emit("new-events", apacheResponse, function() {
+        if (apacheResponse.newestEventId > clientData.lastEvent) {
+          clientData.lastEvent = apacheResponse.newestEventId;
+        }
+        clientData.requestingEvents = false;
+      });
+    }
   );
 }
 
 var listenersForEventsList = [];
 var listenersForHighlighedCharacters = [];
 
-function notifyActiveCharacters(lastEventForCharacter) {
+function sendNewEventsToCharacters(lastEventForCharacter) {
   listenersForEventsList.forEach(function(clientData) {
 
     var clientCharId = clientData.charId;
-
-    if (clientCharId in lastEventForCharacter && lastEventForCharacter[clientCharId] > clientData.lastEvent) {
-      pushNewEventsToClient(clientData);
-
-      clientData.lastEvent = lastEventForCharacter[clientCharId]; // update last event for this session
+    if (clientCharId in lastEventForCharacter
+      && !clientData.requestingEvents
+      && lastEventForCharacter[clientCharId] > clientData.lastEvent) {
+      clientData.requestingEvents = true;
+      pushNewEventsToClientAndUpdateLastEvent(clientData);
     }
   });
 }
@@ -64,9 +69,9 @@ setInterval(function() {
     rows.forEach(function(element) {
       lastEventsForCharacters[element.charId] = element.lastEvent;
     });
-    notifyActiveCharacters(lastEventsForCharacters);
+    sendNewEventsToCharacters(lastEventsForCharacters);
   });
-}, EVENT_REFRESH_FREQUENCY_MSEC);
+}, NEW_EVENTS_REFRESH_FREQUENCY_MSEC);
 
 setInterval(function() {
   var playerIds = listenersForHighlighedCharacters.map(function(clientData) {
@@ -109,13 +114,14 @@ function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listene
       'WHERE c.id = ? AND s.id = ?', [charId, sessionId], function(err, rows) {
       if (rows[0].count == 1) {
         console.log("Add user ", charId, " as an event observer");
-        var hostName = /(.*)(:\d+)?/.exec(socket.handshake.headers.host)[1];
+        var hostName = /([^:]+)(:\d+)?/.exec(socket.handshake.headers.host)[1];
         listenersForEventsList.push({
           charId: charId,
           socket: socket,
           lastEvent: lastEvent,
           cookies: socket.handshake.headers.cookie,
-          hostName: hostName
+          hostName: hostName,
+          requestingEvents: false,
         });
       } else {
         socket.disconnect();
