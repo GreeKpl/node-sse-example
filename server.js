@@ -31,7 +31,14 @@ function pushNewEventsToClientAndUpdateLastEvent(clientData) {
     requestUrl,
     clientData,
     function(apacheResponse) {
+      if (apacheResponse.e) {
+        console.log("Request to apache", clientData.charId, "returned error:", apacheResponse.e);
+        removeFromNewEventsObservers(clientData.socket);
+        clientData.socket.disconnect();
+        return;
+      }
       clientData.socket.emit("new-events", apacheResponse, function() {
+
         if (apacheResponse.newestEventId > clientData.lastEvent) {
           clientData.lastEvent = apacheResponse.newestEventId;
         }
@@ -41,11 +48,11 @@ function pushNewEventsToClientAndUpdateLastEvent(clientData) {
   );
 }
 
-var listenersForEventsList = [];
+var listenersForNewEventsList = [];
 var listenersForHighlighedCharacters = [];
 
 function sendNewEventsToCharacters(lastEventForCharacter) {
-  listenersForEventsList.forEach(function(clientData) {
+  listenersForNewEventsList.forEach(function(clientData) {
 
     var clientCharId = clientData.charId;
     if (clientCharId in lastEventForCharacter
@@ -58,7 +65,7 @@ function sendNewEventsToCharacters(lastEventForCharacter) {
 }
 
 setInterval(function() {
-  var characterIds = listenersForEventsList.map(function(clientData) {
+  var characterIds = listenersForNewEventsList.map(function(clientData) {
     return clientData.charId;
   });
 
@@ -107,13 +114,22 @@ var io = socketIO(server, {
   path: '/real-time/socket.io'
 });
 
+function removeFromNewEventsObservers(socket) {
+  for (var i = 0; i < listenersForNewEventsList.length; i++) {
+    if (listenersForNewEventsList[i].socket == socket) {
+      console.log("Remove user", listenersForNewEventsList[i].charId, "from event observers");
+      listenersForNewEventsList.splice(i, 1);
+    }
+  }
+}
+
 function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listenersForEventsList, dbConnection) {
   if (!isNaN(charId) && !isNaN(lastEvent)) {
     dbConnection.query('SELECT COUNT(*) AS count FROM sessions s ' +
       'INNER JOIN chars c ON c.player = s.player ' +
       'WHERE c.id = ? AND s.id = ?', [charId, sessionId], function(err, rows) {
       if (rows[0].count == 1) {
-        console.log("Add user ", charId, " as an event observer");
+        console.log("Add user", charId, "as an event observer");
         var hostName = /([^:]+)(:\d+)?/.exec(socket.handshake.headers.host)[1];
         listenersForEventsList.push({
           charId: charId,
@@ -129,13 +145,17 @@ function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listene
     });
 
     socket.on('disconnect', function() {
-      for (var i = 0; i < listenersForEventsList.length; i++) {
-        if (listenersForEventsList[i].socket == socket) {
-          console.log("Remove user", listenersForEventsList[i].charId, "from event observers");
-          listenersForEventsList.splice(i, 1);
-        }
-      }
+      removeFromNewEventsObservers(socket);
     });
+  }
+}
+
+function removeFromHighlightedCharacters(socket) {
+  for (var i = 0; i < listenersForHighlighedCharacters.length; i++) {
+    if (listenersForHighlighedCharacters[i].socket == socket) {
+      console.log("Remove player", listenersForHighlighedCharacters[i].playerId, "from active characters");
+      listenersForHighlighedCharacters.splice(i, 1);
+    }
   }
 }
 
@@ -146,7 +166,7 @@ function registerHighlightedCharacters(sessionId, socket, listenersForHighlighed
     if (rows.length > 0) {
       var playerId = rows[0].player;
       if (playerId) {
-        console.log("Add player ", playerId, " as active characters watcher");
+        console.log("Add player", playerId, "as active characters watcher");
         listenersForHighlighedCharacters.push({
           playerId: playerId,
           socket: socket,
@@ -159,12 +179,7 @@ function registerHighlightedCharacters(sessionId, socket, listenersForHighlighed
   });
 
   socket.on('disconnect', function() {
-    for (var i = 0; i < listenersForHighlighedCharacters.length; i++) {
-      if (listenersForHighlighedCharacters[i].socket == socket) {
-        console.log("Remove player", listenersForHighlighedCharacters[i].playerId, "from active characters");
-        listenersForHighlighedCharacters.splice(i, 1);
-      }
-    }
+    removeFromHighlightedCharacters(socket);
   });
 }
 
@@ -177,7 +192,7 @@ io.on('connection', function(socket) {
       var sessionId = cookies.get(SESSION_COOKIE_NAME);
       var charId = parseInt(socket.handshake.query["character"], 10);
       var lastEvent = parseInt(socket.handshake.query["lastEvent"], 10);
-      registerNewEventsObserver(charId, lastEvent, sessionId, socket, listenersForEventsList, dbConnection);
+      registerNewEventsObserver(charId, lastEvent, sessionId, socket, listenersForNewEventsList, dbConnection);
       break;
     case "highlightedCharacters":
       var sessionId = cookies.get(SESSION_COOKIE_NAME);
