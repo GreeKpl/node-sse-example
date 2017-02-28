@@ -2,13 +2,11 @@ var Cookies = require("cookies"),
   http = require('http'),
   mysql = require('mysql'),
   url = require('url'),
-  deepEqual = require('deep-equal'),
   socketIO = require('socket.io'),
-  requestToApache = require("./requestToApache").default;
+  highlightCharacters = require('./highlightCharacters'),
+  newEventsRefresh = require("./newEventsRefresh");
 
 
-var NEW_EVENTS_REFRESH_FREQUENCY_MSEC = 100;
-var HIGHLIGHTED_CHARACTERS_FREQUENCY_MSEC = 1000;
 var SESSION_COOKIE_NAME = "40d0228e409c8b711909680cba94881c";
 
 var SERVER_PORT = 12345;
@@ -22,89 +20,6 @@ var dbConnection = mysql.createConnection(dbCredentials);
 dbConnection.connect();
 
 
-function pushNewEventsToClientAndUpdateLastEvent(clientData) {
-  var requestUrl = '/liteindex.php?page=info.new_events&le='
-    + clientData.lastEvent
-    + "&character=" + clientData.charId;
-
-  requestToApache(
-    requestUrl,
-    clientData,
-    function(apacheResponse) {
-      if (apacheResponse.e) {
-        console.log("Request to apache", clientData.charId, "returned error:", apacheResponse.e);
-        removeFromNewEventsObservers(clientData.socket);
-        clientData.socket.disconnect();
-        return;
-      }
-      clientData.socket.emit("new-events", apacheResponse, function() {
-
-        if (apacheResponse.newestEventId > clientData.lastEvent) {
-          clientData.lastEvent = apacheResponse.newestEventId;
-        }
-        clientData.requestingEvents = false;
-      });
-    }
-  );
-}
-
-var listenersForNewEventsList = [];
-var listenersForHighlighedCharacters = [];
-
-function sendNewEventsToCharacters(lastEventForCharacter) {
-  listenersForNewEventsList.forEach(function(clientData) {
-
-    var clientCharId = clientData.charId;
-    if (clientCharId in lastEventForCharacter
-      && !clientData.requestingEvents
-      && lastEventForCharacter[clientCharId] > clientData.lastEvent) {
-      clientData.requestingEvents = true;
-      pushNewEventsToClientAndUpdateLastEvent(clientData);
-    }
-  });
-}
-
-setInterval(function() {
-  var characterIds = listenersForNewEventsList.map(function(clientData) {
-    return clientData.charId;
-  });
-
-  characterIds.push(-1); // to make sure the list is never empty
-  dbConnection.query('SELECT `observer` AS charId, MAX(`event`) AS lastEvent FROM events_obs ' +
-    'WHERE observer IN (?) GROUP BY observer', [characterIds], function(err, rows) {
-    var lastEventsForCharacters = {};
-    rows.forEach(function(element) {
-      lastEventsForCharacters[element.charId] = element.lastEvent;
-    });
-    sendNewEventsToCharacters(lastEventsForCharacters);
-  });
-}, NEW_EVENTS_REFRESH_FREQUENCY_MSEC);
-
-setInterval(function() {
-  var playerIds = listenersForHighlighedCharacters.map(function(clientData) {
-    return clientData.playerId;
-  });
-
-  playerIds.push(-1); // to make sure the list is never empty
-  dbConnection.query('SELECT c.player, c.id AS charId, new = 0 AS new FROM `newevents` ne ' +
-    'INNER JOIN `chars` c ON ne.person = c.id AND c.player IN (?)', [playerIds], function(err, rows) {
-    var charsByPlayer = {};
-    rows.forEach(function(row) {
-      if (!charsByPlayer[row.player]) {
-        charsByPlayer[row.player] = {};
-      }
-      charsByPlayer[row.player][row.charId] = row.new;
-    });
-    listenersForHighlighedCharacters.forEach(function(clientData) {
-      var currentCharactersList = charsByPlayer[clientData.playerId];
-      if (!deepEqual(clientData.previousCharacterList, currentCharactersList)) { // notify if anything has changed
-        clientData.socket.emit("highlighted-characters", charsByPlayer[clientData.playerId]);
-      }
-      clientData.previousCharacterList = currentCharactersList;
-    });
-  });
-}, HIGHLIGHTED_CHARACTERS_FREQUENCY_MSEC);
-
 var server = http.createServer(function(req, res) {
   res.writeHead(200, {'Content-Type': 'text/plain'});
   res.end('okay');
@@ -114,92 +29,36 @@ var io = socketIO(server, {
   path: '/real-time/socket.io'
 });
 
-function removeFromNewEventsObservers(socket) {
-  for (var i = 0; i < listenersForNewEventsList.length; i++) {
-    if (listenersForNewEventsList[i].socket == socket) {
-      console.log("Remove user", listenersForNewEventsList[i].charId, "from event observers");
-      listenersForNewEventsList.splice(i, 1);
-    }
-  }
-}
-
-function registerNewEventsObserver(charId, lastEvent, sessionId, socket, listenersForEventsList, dbConnection) {
-  if (!isNaN(charId) && !isNaN(lastEvent)) {
-    dbConnection.query('SELECT COUNT(*) AS count FROM sessions s ' +
-      'INNER JOIN chars c ON c.player = s.player ' +
-      'WHERE c.id = ? AND s.id = ?', [charId, sessionId], function(err, rows) {
-      if (rows[0].count == 1) {
-        console.log("Add user", charId, "as an event observer");
-        var hostName = /([^:]+)(:\d+)?/.exec(socket.handshake.headers.host)[1];
-        listenersForEventsList.push({
-          charId: charId,
-          socket: socket,
-          lastEvent: lastEvent,
-          cookies: socket.handshake.headers.cookie,
-          hostName: hostName,
-          requestingEvents: false,
-        });
-      } else {
-        socket.disconnect();
-      }
-    });
-
-    socket.on('disconnect', function() {
-      removeFromNewEventsObservers(socket);
-    });
-  }
-}
-
-function removeFromHighlightedCharacters(socket) {
-  for (var i = 0; i < listenersForHighlighedCharacters.length; i++) {
-    if (listenersForHighlighedCharacters[i].socket == socket) {
-      console.log("Remove player", listenersForHighlighedCharacters[i].playerId, "from active characters");
-      listenersForHighlighedCharacters.splice(i, 1);
-    }
-  }
-}
-
-function registerHighlightedCharacters(sessionId, socket, listenersForHighlighedCharacters, dbConnection) {
-
-  dbConnection.query('SELECT player FROM sessions s ' +
-    'WHERE s.id = ?', [sessionId], function(err, rows) {
-    if (rows.length > 0) {
-      var playerId = rows[0].player;
-      if (playerId) {
-        console.log("Add player", playerId, "as active characters watcher");
-        listenersForHighlighedCharacters.push({
-          playerId: playerId,
-          socket: socket,
-          previousCharacterList: {},
-        });
-      }
-    } else {
-      socket.disconnect();
-    }
-  });
-
-  socket.on('disconnect', function() {
-    removeFromHighlightedCharacters(socket);
-  });
-}
-
 io.on('connection', function(socket) {
   var cookies = new Cookies(socket.handshake);
-  var notifcationType = socket.handshake.query["notificationType"];
+  var sessionId = cookies.get(SESSION_COOKIE_NAME);
 
+  var notifcationType = socket.handshake.query["notificationType"];
   switch (notifcationType) {
     case "newEvents":
-      var sessionId = cookies.get(SESSION_COOKIE_NAME);
       var charId = parseInt(socket.handshake.query["character"], 10);
       var lastEvent = parseInt(socket.handshake.query["lastEvent"], 10);
-      registerNewEventsObserver(charId, lastEvent, sessionId, socket, listenersForNewEventsList, dbConnection);
+
+      newEventsRefresh.registerClient(charId, lastEvent, sessionId, socket, dbConnection);
+      socket.on('disconnect', function() {
+        newEventsRefresh.unregisterClient(socket);
+      });
       break;
     case "highlightedCharacters":
-      var sessionId = cookies.get(SESSION_COOKIE_NAME);
-      registerHighlightedCharacters(sessionId, socket, listenersForHighlighedCharacters, dbConnection);
+
+      highlightCharacters.registerClient(sessionId, socket, dbConnection);
+      socket.on('disconnect', function() {
+        highlightCharacters.unregisterClient(socket);
+      });
       break;
   }
 });
+
+/**
+ * Infinite setIntervals that query the db for the new data to push it to clients.
+ */
+newEventsRefresh.startDispatcherLoop(dbConnection);
+highlightCharacters.startDispatcherLoop(dbConnection);
 
 process.on('exit', function() {
   dbConnection.disconnect();
